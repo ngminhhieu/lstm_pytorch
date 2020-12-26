@@ -113,7 +113,6 @@ if __name__ == '__main__':
     # Create dataloaders for both training and validation datasets
     training_generator = getDL(trnX, trainY, params)
     validation_generator = getDL(valX, valY, params)
-    sys.exit()
 
     # Create the model
     model = forecasterModel(n_lags, hidden_dim, rnn_layers, dropout).to(device)
@@ -132,6 +131,11 @@ if __name__ == '__main__':
         valid_ls = 0
         # Train for one epoch
         for xb, yb in training_generator:
+            print(xb.shape)
+            print(yb.shape)
+            print(type(xb))
+            print(type(yb))
+            sys.exit()
             # Perform the forward pass operation
             ips = xb.unsqueeze(0)
             targs = yb

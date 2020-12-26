@@ -1,6 +1,6 @@
 import pandas as pd
 import torch
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from load_data import stockTickerDataset
 import numpy as np
 
@@ -58,7 +58,7 @@ def standardizeData(X, SS = None, train = False):
         train (bool, optional): [If False, means validation set to be loaded and SS needs to be passed to scale it]. Defaults to False.
     """
     if train:
-        SS = StandardScaler()   
+        SS = MinMaxScaler()   
         new_X = SS.fit_transform(X)
         return (new_X, SS)
     else:

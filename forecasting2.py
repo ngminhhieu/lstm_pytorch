@@ -5,10 +5,12 @@ from curateData import curateData, standardizeData, getDL, get_preds, getData
 from train_val_split import train_val_test_split
 from extractData import extractHistory
 from datetime import date
-from RNN_forecaster import forecasterModel
+from RNN_forecaster import forecasterModel, LSTM
 import streamlit as st
 import pandas as pd
 import sys
+import numpy as np
+import matplotlib.pyplot as plt
 
 # Display info about the app
 st.title("PM2.5 forecasting using DGI and CVAE")
@@ -107,76 +109,62 @@ if __name__ == '__main__':
     pm_dataset = pm_dataset.replace("**", 0)
     pm_dataset = pm_dataset.to_numpy()
     
-
     # Perform the train validation split
     train_data, val_data, test_data = train_val_test_split(pm_dataset, train_pct, valid_pct)
 
     # Standardize the data to bring the inputs on a uniform scale
-    normalized_train, SS_ = standardizeData(train_data, train = True)
-    normalized_val, _ = standardizeData(val_data, SS_)
-    normalized_test, _ = standardizeData(test_data, SS_)
+    normalized_train, sc = standardizeData(train_data, train = True)
+    normalized_val, _ = standardizeData(val_data, sc)
+    normalized_test, _ = standardizeData(test_data, sc)
 
-    trainX, valX = getData(normalized_train, sequence_length, horizon, output_dim)
-    trainY, valY = getData(normalized_val, sequence_length, horizon, output_dim)
-    trainZ, valZ = getData(normalized_test, sequence_length, horizon, output_dim)
+    trainX, trainY = getData(normalized_train, sequence_length, horizon, output_dim)
+    valX, valY = getData(normalized_val, sequence_length, horizon, output_dim)
+    testX, testY = getData(normalized_test, sequence_length, horizon, output_dim)
+    trainY = trainY[:, 0, :]
+    valY = valY[:, 0, :]
+    testY = testY[:, 0, :]
+    trainX = torch.FloatTensor(trainX)
+    trainY = torch.FloatTensor(trainY)
+    valX = torch.FloatTensor(valX)
+    valY = torch.FloatTensor(valY)
+    testX = torch.FloatTensor(testX)
+    testY = torch.FloatTensor(testY)
 
-    # Create dataloaders for both training and validation datasets
-    # train Y này trước đó không được normalized
-    training_generator = getDL(trainX, trainY, params)
-    validation_generator = getDL(trainY, valY, params)
 
     # Create the model
-    model = forecasterModel(n_lags, hidden_dim, rnn_layers, dropout).to(device)
+    num_epochs = 1
+    learning_rate = 0.01
 
-    # Define the loss function and the optimizer
-    loss_func = nn.MSELoss()
-    optim = torch.optim.Adam(model.parameters(), lr = learning_rate)
+    input_size = 69
+    hidden_size = 2
+    num_layers = 1
 
-    # Track the losses across epochs
-    train_losses = []
-    valid_losses = []
-    st.write("Extracted data, now training the model...")
-    # Training loop 
-    for epoch in range(1, n_epochs + 1):
-        ls = 0
-        valid_ls = 0
-        # Train for one epoch
-        for xb, yb in training_generator:
-            # Perform the forward pass operation
-            ips = xb.unsqueeze(0)
-            targs = yb
-            op = model(ips)
-            
-            # Backpropagate the errors through the network
-            optim.zero_grad()
-            loss = loss_func(op, targs)
-            loss.backward()
-            optim.step()
-            ls += (loss.item() / ips.shape[1])
-        
-        # Check the performance on valiation data
-        for xb, yb in validation_generator:
-            ips = xb.unsqueeze(0)
-            ops = model.predict(ips)
-            vls = loss_func(ops, yb)
-            valid_ls += (vls.item() / xb.shape[1])
+    num_classes = 1
 
-        rmse = lambda x: round(sqrt(x * 1.000), 3)
-        train_losses.append(str(rmse(ls)))
-        valid_losses.append(str(rmse(valid_ls)))
-        
-        # Print the total loss for every tenth epoch
-        if (epoch % 10 == 0) or (epoch == 1):
-            st.write(f"Epoch {str(epoch):<4}/{str(n_epochs):<4} | Train Loss: {train_losses[-1]:<8}| Validation Loss: {valid_losses[-1]:<8}")
+    lstm = LSTM(num_classes, input_size, hidden_size, num_layers)
 
-    # Make predictions on train, validation and test data and plot 
-    # the predictions along with the true values 
-    to_numpy = lambda x, y: (x.squeeze(0).numpy(), y.squeeze(0).numpy())
-    train_preds, train_labels = get_preds(training_generator, model)
-    train_preds, train_labels = to_numpy(train_preds, train_labels)
+    criterion = torch.nn.MSELoss()    # mean-squared error for regression
+    optimizer = torch.optim.Adam(lstm.parameters(), lr=learning_rate)
 
-    val_preds, val_labels = get_preds(validation_generator, model)
-    val_preds, val_labels = to_numpy(val_preds, val_labels)
+    # Train the model
+    for epoch in range(num_epochs):
+        outputs = lstm(trainX)
+        optimizer.zero_grad()
+        loss = criterion(outputs, trainY)
+        loss.backward()
+        optimizer.step()
+        if epoch % 100 == 0:
+            print("Epoch: %d, loss: %1.5f" % (epoch, loss.item()))
 
-    # visualize_results((train_preds, val_preds), (train_labels, val_labels), SYMBOL, 
-    #                 f"./img/{SYMBOL}_predictions.png", f"./predictions/{SYMBOL}_predictions.csv", dates)
+    prediction = lstm(testX)
+    prediction = prediction.data.numpy()
+    groundtruth = testY.data.numpy()
+    rest_of_features = normalized_test[:(-sequence_length-horizon), 0:-1]
+    prediction = sc.inverse_transform(np.concatenate((rest_of_features,prediction), axis=1))
+    groundtruth = sc.inverse_transform(np.concatenate((rest_of_features,groundtruth), axis=1))
+
+    plt.axvline(x=train_pct, c='r', linestyle='--')
+    plt.plot(groundtruth)
+    plt.plot(prediction)
+    plt.suptitle('Time-Series Prediction')
+    plt.show()
